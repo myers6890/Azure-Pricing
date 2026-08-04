@@ -69,6 +69,8 @@ export default function App() {
 
     setLoading(true)
     setError(null)
+    setCompareItems([])
+    setCompareSku(null)
 
     try {
       const raw = await fetchRetailPrices(

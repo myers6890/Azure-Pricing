@@ -8,8 +8,14 @@ const app = express()
 const PORT = process.env.PORT || 8787
 const AZURE_PRICES =
   'https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview'
+const cache = new Map()
+const CACHE_TTL_MS = 5 * 60 * 1000
 
 app.use(cors())
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 app.get('/api/retail/prices', async (req, res) => {
   try {
@@ -18,9 +24,23 @@ app.get('/api/retail/prices', async (req, res) => {
       if (typeof value === 'string') url.searchParams.set(key, value)
     }
 
-    const upstream = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    })
+    const cacheKey = url.toString()
+    const cached = cache.get(cacheKey)
+    if (cached && cached.expires > Date.now()) {
+      res.set('Cache-Control', 'public, max-age=300')
+      res.set('X-Aether-Cache', 'HIT')
+      res.json(cached.data)
+      return
+    }
+
+    let upstream
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      upstream = await fetch(url, {
+        headers: { Accept: 'application/json' },
+      })
+      if (upstream.status !== 429) break
+      await sleep(500 * 2 ** attempt)
+    }
 
     if (!upstream.ok) {
       const text = await upstream.text()
@@ -29,7 +49,9 @@ app.get('/api/retail/prices', async (req, res) => {
     }
 
     const data = await upstream.json()
+    cache.set(cacheKey, { expires: Date.now() + CACHE_TTL_MS, data })
     res.set('Cache-Control', 'public, max-age=300')
+    res.set('X-Aether-Cache', 'MISS')
     res.json(data)
   } catch (error) {
     console.error('Retail prices proxy error:', error)
