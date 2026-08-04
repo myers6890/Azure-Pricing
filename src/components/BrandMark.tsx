@@ -14,7 +14,7 @@ export function BrandMark() {
       </svg>
       <div className="brand-text">
         <span className="brand-name">Aether</span>
-        <span className="brand-tag">Azure pricing, finally clear</span>
+        <span className="brand-tag">US VM quoting, Pricing Calculator accurate</span>
       </div>
     </div>
   )

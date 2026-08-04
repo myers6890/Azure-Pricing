@@ -1,17 +1,21 @@
-# Aether — Azure Pricing Calculator
+# Aether — US Azure VM Quoter
 
-A faster, clearer Azure pricing calculator powered by the **Microsoft Azure Retail Prices API** (`2023-01-01-preview`).
+A faster VM quoting tool for the **United States**, powered by the Microsoft Azure Retail Prices API (`2023-01-01-preview`). Built to match Azure Pricing Calculator accuracy for the meters that matter when you quote VMs all day.
 
-## Why Aether
+## What it prices (live from Microsoft)
 
-Microsoft’s official calculator is powerful but heavy. Aether focuses on the workflows engineers actually need:
+| Component | How it’s sourced |
+|---|---|
+| **Compute (Linux base)** | `Virtual Machines` consumption meters |
+| **Windows license** | Windows VM meter − Linux meter (or Windows Server license meters) |
+| **Windows Azure Hybrid Benefit** | Sets Windows license to $0 |
+| **SQL Server Web / Standard / Enterprise** | `Virtual Machines Licenses` by vCPU (4-core minimum) |
+| **SQL Azure Hybrid Benefit** | Sets SQL license to $0 |
+| **Savings plans (1y / 3y)** | Nested `savingsPlan` rates on compute meters |
+| **Reserved instances (1y / 3y)** | `priceType eq 'Reservation'` compute meters |
+| **OS disks** | Premium SSD / Standard SSD / Standard HDD managed disks |
 
-- **Live retail meters** from Microsoft’s unauthenticated Retail Prices API
-- **Instant SKU search** across product, meter, and ARM SKU names
-- **Savings plan visibility** (1-year / 3-year) inline with pay-as-you-go
-- **Region radar** to compare the same SKU across major Azure regions
-- **Live estimate cart** with quantity, hours/month, and commitment mode
-- **CSV / JSON export** for sharing cost models
+**Important (same as Pricing Calculator):** savings plans and reserved instances discount **compute only**. Windows and SQL licenses remain pay-as-you-go unless Hybrid Benefit is enabled.
 
 ## Quick start
 
@@ -20,12 +24,8 @@ npm install
 npm run dev
 ```
 
-- App: [http://localhost:5173](http://localhost:5173)
-- API proxy: [http://localhost:8787](http://localhost:8787)
-
-The Express proxy at `/api/retail/prices` forwards to:
-
-`https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview`
+- App: http://localhost:5173  
+- API proxy: http://localhost:8787 → `https://prices.azure.com/api/retail/prices`
 
 ## Production
 
@@ -34,17 +34,16 @@ npm run build
 npm start
 ```
 
-Serves the built UI and the Microsoft API proxy on port `8787` (or `PORT`).
+## Quote workflow
 
-## API notes
+1. Pick a **US region**
+2. Search a VM size (`D4s_v5`, `E16ds_v5`, …)
+3. Configure OS, Windows/SQL licensing, commitment, OS disk, quantity, hours
+4. Compare PAYG vs savings plan vs reserved instance
+5. Add lines to the quote cart and export CSV/JSON
 
-- No Azure subscription or auth is required for retail list prices
-- Filter values are case-sensitive on the preview API
-- Responses paginate at 1,000 items; Aether follows `NextPageLink` through the proxy
-- Savings plan rates are only available on `api-version=2023-01-01-preview`
+## Notes
 
-## Stack
-
-- React + TypeScript + Vite
-- Express proxy for the Microsoft Retail Prices API
-- Sora + IBM Plex Mono typography
+- USD Microsoft retail list prices
+- EA / CSP negotiated discounts are not applied
+- Default month = 730 hours

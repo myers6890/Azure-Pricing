@@ -1,39 +1,37 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { compareSkuAcrossRegions, fetchRetailPrices } from './api/retailPrices'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  loadVmRateCard,
+  searchVmSkus,
+  type Commitment,
+  type OsType,
+  type SqlEdition,
+  type VmRateCard,
+  type VmSkuOption,
+} from './api/vmPricing'
 import { BrandMark } from './components/BrandMark'
-import { EstimatePanel } from './components/EstimatePanel'
-import { RegionCompare } from './components/RegionCompare'
-import { ResultsTable } from './components/ResultsTable'
-import { CURRENCIES } from './data/currencies'
-import { COMPARE_REGIONS, REGIONS } from './data/regions'
-import { SERVICE_PRESETS } from './data/services'
-import { useEstimate } from './hooks/useEstimate'
-import { estimateLineMonthly, HOURS_PER_MONTH } from './lib/cost'
-import type { RetailPriceItem, SearchFilters } from './types/pricing'
+import { CommitmentCompare } from './components/CommitmentCompare'
+import { QuoteBreakdown } from './components/QuoteBreakdown'
+import { QuoteCart } from './components/QuoteCart'
+import { QuoteConfigurator } from './components/QuoteConfigurator'
+import { VmSearcher } from './components/VmSearcher'
+import { DEFAULT_OS_DISK } from './data/disks'
+import { DEFAULT_US_REGION, US_REGIONS } from './data/usRegions'
+import {
+  calculateBreakdown,
+  compareCommitments,
+  HOURS_PER_MONTH,
+} from './lib/vmQuote'
+import type { QuoteLine } from './types/quote'
 
-const DEFAULT_FILTERS: SearchFilters = {
-  query: 'D4s_v5',
-  serviceFamily: 'Compute',
-  serviceName: 'Virtual Machines',
-  region: 'eastus',
-  currency: 'USD',
-  priceType: 'Consumption',
-  linuxOnly: true,
-  excludeSpot: true,
-}
+const STORAGE_KEY = 'aether-us-vm-quote-v1'
 
-function refineItems(items: RetailPriceItem[], filters: SearchFilters): RetailPriceItem[] {
-  return items
-    .filter((item) => item.isPrimaryMeterRegion !== false)
-    .filter((item) => {
-      if (!filters.excludeSpot) return true
-      return !/spot|low priority/i.test(`${item.meterName} ${item.skuName}`)
-    })
-    .filter((item) => {
-      if (!filters.linuxOnly || filters.serviceName !== 'Virtual Machines') return true
-      return !/windows/i.test(item.productName)
-    })
-    .sort((a, b) => a.retailPrice - b.retailPrice)
+function loadCart(): QuoteLine[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as QuoteLine[]) : []
+  } catch {
+    return []
+  }
 }
 
 function download(filename: string, content: string, type: string) {
@@ -47,169 +45,243 @@ function download(filename: string, content: string, type: string) {
 }
 
 export default function App() {
-  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS)
-  const [items, setItems] = useState<RetailPriceItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const [region, setRegion] = useState(DEFAULT_US_REGION)
+  const [query, setQuery] = useState('D4s_v5')
+  const [results, setResults] = useState<VmSkuOption[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [selected, setSelected] = useState<VmSkuOption | null>(null)
+  const [rateCard, setRateCard] = useState<VmRateCard | null>(null)
+  const [rateLoading, setRateLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [compareItems, setCompareItems] = useState<RetailPriceItem[]>([])
-  const [compareLoading, setCompareLoading] = useState(false)
-  const [compareSku, setCompareSku] = useState<string | null>(null)
+
+  const [os, setOs] = useState<OsType>('windows')
+  const [windowsAhb, setWindowsAhb] = useState(false)
+  const [sqlEdition, setSqlEdition] = useState<SqlEdition>('none')
+  const [sqlAhb, setSqlAhb] = useState(false)
+  const [commitment, setCommitment] = useState<Commitment>('payg')
+  const [quantity, setQuantity] = useState(1)
+  const [hoursPerMonth, setHoursPerMonth] = useState(HOURS_PER_MONTH)
+  const [osDiskId, setOsDiskId] = useState(DEFAULT_OS_DISK)
+
+  const [lines, setLines] = useState<QuoteLine[]>(loadCart)
   const [bump, setBump] = useState(false)
-  const { lines, addItem, removeLine, updateLine, clear } = useEstimate()
-  const abortRef = useRef<AbortController | null>(null)
-  const compareAbortRef = useRef<AbortController | null>(null)
-  const booted = useRef(false)
 
-  const currency = filters.currency
+  const searchAbort = useRef<AbortController | null>(null)
+  const rateAbort = useRef<AbortController | null>(null)
 
-  async function runSearch(next = filters) {
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
-
-    setLoading(true)
-    setError(null)
-    setCompareItems([])
-    setCompareSku(null)
-
-    try {
-      const raw = await fetchRetailPrices(
-        {
-          region: next.region,
-          currency: next.currency,
-          serviceName: next.serviceName || undefined,
-          serviceFamily: next.serviceFamily || undefined,
-          query: next.query || undefined,
-          priceType: next.priceType,
-          maxPages: 2,
-        },
-        controller.signal,
-      )
-      setItems(refineItems(raw, next))
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') return
-      setItems([])
-      setError(err instanceof Error ? err.message : 'Failed to load prices')
-    } finally {
-      if (!controller.signal.aborted) setLoading(false)
-    }
-  }
+  const regionLabel =
+    US_REGIONS.find((r) => r.value === region)?.label ?? region
 
   useEffect(() => {
-    if (booted.current) return
-    booted.current = true
-    void runSearch(DEFAULT_FILTERS)
-  }, [])
-
-  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(lines))
     setBump(true)
     const t = window.setTimeout(() => setBump(false), 280)
     return () => window.clearTimeout(t)
   }, [lines])
 
-  const regionsByGroup = useMemo(() => {
-    const map = new Map<string, typeof REGIONS>()
-    for (const region of REGIONS) {
-      const list = map.get(region.group) ?? []
-      list.push(region)
-      map.set(region.group, list)
+  // Debounced SKU search
+  useEffect(() => {
+    const q = query.trim()
+    if (q.length < 2) {
+      setResults([])
+      return
     }
-    return [...map.entries()]
-  }, [])
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    void runSearch(filters)
-  }
-
-  function applyPreset(serviceName: string, serviceFamily?: string, queryHint?: string) {
-    const next: SearchFilters = {
-      ...filters,
-      serviceName,
-      serviceFamily: serviceFamily ?? '',
-      query: queryHint ?? '',
-      linuxOnly: serviceName === 'Virtual Machines' ? filters.linuxOnly : false,
-    }
-    setFilters(next)
-    void runSearch(next)
-  }
-
-  async function handleCompare(item: RetailPriceItem) {
-    if (!item.armSkuName) return
-    compareAbortRef.current?.abort()
-    const controller = new AbortController()
-    compareAbortRef.current = controller
-    setCompareLoading(true)
-    setCompareSku(item.armSkuName)
-    setCompareItems([])
-
-    try {
-      const results = await compareSkuAcrossRegions({
-        armSkuName: item.armSkuName,
-        productName: item.productName,
-        regions: COMPARE_REGIONS,
-        currency: filters.currency,
-        signal: controller.signal,
-      })
-      setCompareItems(
-        results.filter((r) => !/spot|low priority/i.test(`${r.meterName} ${r.skuName}`)),
-      )
-    } catch (err) {
-      if ((err as Error).name !== 'AbortError') {
-        setCompareItems([])
+    const handle = window.setTimeout(async () => {
+      searchAbort.current?.abort()
+      const controller = new AbortController()
+      searchAbort.current = controller
+      setSearchLoading(true)
+      setError(null)
+      try {
+        const skus = await searchVmSkus({ region, query: q, signal: controller.signal })
+        setResults(skus)
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return
+        setResults([])
+        setError(err instanceof Error ? err.message : 'Search failed')
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false)
       }
-    } finally {
-      if (!controller.signal.aborted) setCompareLoading(false)
+    }, 280)
+
+    return () => window.clearTimeout(handle)
+  }, [query, region])
+
+  // Load full rate card when SKU / region / SQL / disk changes
+  useEffect(() => {
+    if (!selected) {
+      setRateCard(null)
+      return
     }
+
+    rateAbort.current?.abort()
+    const controller = new AbortController()
+    rateAbort.current = controller
+    setRateLoading(true)
+    setError(null)
+
+    void loadVmRateCard({
+      armSkuName: selected.armSkuName,
+      region,
+      sqlEdition,
+      osDiskId,
+      signal: controller.signal,
+    })
+      .then((card) => {
+        if (!controller.signal.aborted) setRateCard(card)
+      })
+      .catch((err: Error) => {
+        if (err.name === 'AbortError') return
+        setRateCard(null)
+        setError(err.message || 'Failed to load rate card')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRateLoading(false)
+      })
+  }, [selected, region, sqlEdition, osDiskId])
+
+  const inputs = useMemo(
+    () => ({
+      os,
+      windowsAhb,
+      sqlAhb,
+      sqlEdition,
+      commitment,
+      quantity,
+      hoursPerMonth,
+    }),
+    [os, windowsAhb, sqlAhb, sqlEdition, commitment, quantity, hoursPerMonth],
+  )
+
+  const breakdown = useMemo(
+    () => (rateCard ? calculateBreakdown(rateCard, inputs) : null),
+    [rateCard, inputs],
+  )
+
+  const compareRows = useMemo(() => {
+    if (!rateCard) return []
+    return compareCommitments(rateCard, {
+      os,
+      windowsAhb,
+      sqlAhb,
+      sqlEdition,
+      quantity,
+      hoursPerMonth,
+    })
+  }, [rateCard, os, windowsAhb, sqlAhb, sqlEdition, quantity, hoursPerMonth])
+
+  function selectSku(sku: VmSkuOption) {
+    setSelected(sku)
+  }
+
+  function addToQuote() {
+    if (!selected || !rateCard || !breakdown) return
+    const id = [
+      selected.armSkuName,
+      region,
+      os,
+      windowsAhb ? 'wahb' : 'wlic',
+      sqlEdition,
+      sqlAhb ? 'sahb' : 'slic',
+      commitment,
+      osDiskId,
+      quantity,
+      hoursPerMonth,
+      Date.now(),
+    ].join(':')
+
+    setLines((prev) => [
+      ...prev,
+      {
+        id,
+        armSkuName: selected.armSkuName,
+        region,
+        location: rateCard.location,
+        vcpus: rateCard.vcpus,
+        os,
+        windowsAhb,
+        sqlEdition,
+        sqlAhb,
+        commitment,
+        quantity,
+        hoursPerMonth,
+        osDiskId,
+        osDiskLabel: rateCard.osDiskLabel,
+        breakdown,
+        seriesLabel: selected.seriesLabel,
+      },
+    ])
   }
 
   function exportJson() {
     const payload = {
       generatedAt: new Date().toISOString(),
-      currency,
+      currency: 'USD',
+      market: 'United States',
       source: 'Microsoft Azure Retail Prices API',
       sourceUrl: 'https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview',
-      hoursAssumption: HOURS_PER_MONTH,
-      lines: lines.map((line) => ({
-        ...line,
-        monthlyEstimate: estimateLineMonthly(line),
-      })),
-      totalMonthly: lines.reduce((sum, line) => sum + estimateLineMonthly(line), 0),
+      hoursAssumptionDefault: HOURS_PER_MONTH,
+      lines,
+      totalMonthly: lines.reduce((s, l) => s + l.breakdown.totalMonthly, 0),
+      totalAnnual: lines.reduce((s, l) => s + l.breakdown.totalAnnual, 0),
     }
-    download('aether-estimate.json', JSON.stringify(payload, null, 2), 'application/json')
+    download('aether-us-vm-quote.json', JSON.stringify(payload, null, 2), 'application/json')
   }
 
   function exportCsv() {
     const header = [
-      'serviceName',
-      'productName',
-      'sku',
-      'region',
-      'unitPrice',
-      'unitOfMeasure',
       'quantity',
+      'armSkuName',
+      'vcpus',
+      'region',
+      'os',
+      'windowsLicensing',
+      'sqlEdition',
+      'sqlLicensing',
+      'commitment',
       'hoursPerMonth',
-      'pricingMode',
-      'monthlyEstimate',
+      'osDisk',
+      'computeHourly',
+      'windowsLicenseHourly',
+      'sqlLicenseHourly',
+      'diskMonthlyEach',
+      'totalMonthly',
+      'totalAnnual',
+      'reservationUpfront',
       'currency',
     ]
     const rows = lines.map((line) => [
-      line.item.serviceName,
-      line.item.productName,
-      line.item.armSkuName || line.item.skuName,
-      line.item.armRegionName,
-      String(line.item.retailPrice),
-      line.item.unitOfMeasure,
       String(line.quantity),
+      line.armSkuName,
+      String(line.vcpus),
+      line.region,
+      line.os,
+      line.os === 'linux' ? 'n/a' : line.windowsAhb ? 'Azure Hybrid Benefit' : 'License included',
+      line.sqlEdition,
+      line.sqlEdition === 'none'
+        ? 'n/a'
+        : line.sqlAhb
+          ? 'Azure Hybrid Benefit'
+          : 'License included',
+      line.commitment,
       String(line.hoursPerMonth),
-      line.pricingMode,
-      estimateLineMonthly(line).toFixed(4),
-      currency,
+      line.osDiskLabel,
+      line.breakdown.computeHourly.toFixed(6),
+      line.breakdown.windowsLicenseHourly.toFixed(6),
+      line.breakdown.sqlLicenseHourly.toFixed(6),
+      line.breakdown.diskMonthly.toFixed(4),
+      line.breakdown.totalMonthly.toFixed(4),
+      line.breakdown.totalAnnual.toFixed(4),
+      line.breakdown.reservationUpfront != null
+        ? line.breakdown.reservationUpfront.toFixed(4)
+        : '',
+      'USD',
     ])
     const csv = [header, ...rows]
       .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
       .join('\n')
-    download('aether-estimate.csv', csv, 'text/csv')
+    download('aether-us-vm-quote.csv', csv, 'text/csv')
   }
 
   return (
@@ -218,219 +290,125 @@ export default function App() {
         <BrandMark />
         <div className="api-pill" title="Microsoft Azure Retail Prices API">
           <span className="dot" />
-          Live Microsoft Retail Prices API
+          US retail rates · Microsoft API
         </div>
       </header>
 
       <section className="hero">
-        <h1>Price Azure like an engineer, not a spreadsheet.</h1>
+        <h1>Quote US Azure VMs without wrestling the pricing calculator.</h1>
         <p>
-          Search real retail meters, compare regions, and model savings plans — powered directly by
-          Microsoft&apos;s Azure Retail Prices API.
+          Live Microsoft retail meters for compute, Windows licensing, SQL Server licensing,
+          Hybrid Benefit, savings plans, reserved instances, and OS disks — built for people who
+          quote VMs all day.
         </p>
       </section>
 
       <div className="layout">
         <div>
-          <form className="panel controls" onSubmit={onSubmit}>
-            <div className="control-grid">
+          <section className="panel controls">
+            <div className="control-grid region-row">
               <div className="field">
-                <label htmlFor="query">Search SKU, product, or meter</label>
-                <input
-                  id="query"
-                  value={filters.query}
-                  onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
-                  placeholder="e.g. Standard_D4s_v5, Hot LRS, Premium v3"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="region">Region</label>
+                <label htmlFor="region">United States region</label>
                 <select
                   id="region"
-                  value={filters.region}
-                  onChange={(e) => setFilters((f) => ({ ...f, region: e.target.value }))}
+                  value={region}
+                  onChange={(e) => {
+                    setRegion(e.target.value)
+                    setSelected(null)
+                    setRateCard(null)
+                  }}
                 >
-                  {regionsByGroup.map(([group, regions]) => (
+                  {(['US East', 'US Central', 'US West'] as const).map((group) => (
                     <optgroup key={group} label={group}>
-                      {regions.map((region) => (
-                        <option key={region.value} value={region.value}>
-                          {region.label}
+                      {US_REGIONS.filter((r) => r.group === group).map((r) => (
+                        <option key={r.value} value={r.value}>
+                          {r.label}
                         </option>
                       ))}
                     </optgroup>
                   ))}
                 </select>
               </div>
-              <div className="field">
-                <label htmlFor="currency">Currency</label>
-                <select
-                  id="currency"
-                  value={filters.currency}
-                  onChange={(e) => setFilters((f) => ({ ...f, currency: e.target.value }))}
-                >
-                  {CURRENCIES.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code} · {c.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="field tips">
+                <label>Quote tip</label>
+                <div className="tip-box">
+                  Reserved / savings plan discounts apply to <strong>compute only</strong>.
+                  Windows and SQL stay license-included unless you enable Hybrid Benefit.
+                </div>
               </div>
             </div>
 
-            <div className="control-grid" style={{ marginTop: '0.85rem' }}>
-              <div className="field">
-                <label htmlFor="serviceName">Service name</label>
-                <input
-                  id="serviceName"
-                  value={filters.serviceName}
-                  onChange={(e) => setFilters((f) => ({ ...f, serviceName: e.target.value }))}
-                  placeholder="Virtual Machines"
-                  list="service-presets"
-                />
-                <datalist id="service-presets">
-                  {SERVICE_PRESETS.map((preset) => (
-                    <option key={preset.serviceName} value={preset.serviceName} />
-                  ))}
-                </datalist>
-              </div>
-              <div className="field">
-                <label htmlFor="serviceFamily">Service family</label>
-                <select
-                  id="serviceFamily"
-                  value={filters.serviceFamily}
-                  onChange={(e) => setFilters((f) => ({ ...f, serviceFamily: e.target.value }))}
-                >
-                  <option value="">Any family</option>
-                  {[
-                    'Compute',
-                    'Storage',
-                    'Networking',
-                    'Databases',
-                    'Analytics',
-                    'Containers',
-                    'Web',
-                    'Integration',
-                    'Security',
-                    'Management and Governance',
-                    'Internet of Things',
-                    'Developer Tools',
-                  ].map((family) => (
-                    <option key={family} value={family}>
-                      {family}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="priceType">Price type</label>
-                <select
-                  id="priceType"
-                  value={filters.priceType}
-                  onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
-                      priceType: e.target.value as SearchFilters['priceType'],
-                    }))
-                  }
-                >
-                  <option value="Consumption">Consumption</option>
-                  <option value="Reservation">Reservation</option>
-                  <option value="DevTestConsumption">Dev/Test</option>
-                </select>
-              </div>
-            </div>
+            <VmSearcher
+              query={query}
+              onQueryChange={setQuery}
+              loading={searchLoading}
+              results={results}
+              selectedSku={selected?.armSkuName ?? null}
+              onSelect={selectSku}
+            />
 
-            <div className="presets" aria-label="Popular services">
-              {SERVICE_PRESETS.map((preset) => (
-                <button
-                  key={preset.serviceName}
-                  type="button"
-                  className={`chip${filters.serviceName === preset.serviceName ? ' active' : ''}`}
-                  title={preset.hint}
-                  onClick={() => applyPreset(preset.serviceName, preset.serviceFamily, preset.queryHint)}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
+            <QuoteConfigurator
+              os={os}
+              windowsAhb={windowsAhb}
+              sqlEdition={sqlEdition}
+              sqlAhb={sqlAhb}
+              commitment={commitment}
+              quantity={quantity}
+              hoursPerMonth={hoursPerMonth}
+              osDiskId={osDiskId}
+              disabled={!selected}
+              onChange={(patch) => {
+                if (patch.os !== undefined) setOs(patch.os)
+                if (patch.windowsAhb !== undefined) setWindowsAhb(patch.windowsAhb)
+                if (patch.sqlEdition !== undefined) setSqlEdition(patch.sqlEdition)
+                if (patch.sqlAhb !== undefined) setSqlAhb(patch.sqlAhb)
+                if (patch.commitment !== undefined) setCommitment(patch.commitment)
+                if (patch.quantity !== undefined) setQuantity(patch.quantity)
+                if (patch.hoursPerMonth !== undefined) setHoursPerMonth(patch.hoursPerMonth)
+                if (patch.osDiskId !== undefined) setOsDiskId(patch.osDiskId)
+              }}
+            />
+          </section>
 
-            <div className="toggle-row">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={filters.linuxOnly}
-                  onChange={(e) => setFilters((f) => ({ ...f, linuxOnly: e.target.checked }))}
-                />
-                Linux / non-Windows VMs
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={filters.excludeSpot}
-                  onChange={(e) => setFilters((f) => ({ ...f, excludeSpot: e.target.checked }))}
-                />
-                Hide Spot & Low Priority
-              </label>
-            </div>
-
-            <div className="actions">
-              <button type="submit" className="btn btn-primary" disabled={loading}>
-                {loading ? 'Fetching prices…' : 'Search retail prices'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-amber"
-                onClick={() => {
-                  const next = { ...DEFAULT_FILTERS, currency: filters.currency, region: filters.region }
-                  setFilters(next)
-                  void runSearch(next)
-                }}
-              >
-                Reset demo query
-              </button>
-            </div>
-          </form>
-
-          <ResultsTable
-            items={items}
-            currency={currency}
-            loading={loading}
+          <QuoteBreakdown
+            sku={selected?.armSkuName ?? null}
+            regionLabel={regionLabel}
+            vcpus={rateCard?.vcpus ?? selected?.vcpus ?? 0}
+            breakdown={breakdown}
+            loading={rateLoading}
             error={error}
-            onAdd={addItem}
-            onCompare={handleCompare}
+            onAdd={addToQuote}
           />
 
-          <RegionCompare
-            items={compareItems}
-            currency={currency}
-            loading={compareLoading}
-            skuLabel={compareSku}
+          <CommitmentCompare
+            rows={compareRows}
+            active={commitment}
+            onSelect={setCommitment}
           />
 
           <p className="footer-note">
-            Prices come from the{' '}
+            Prices from the{' '}
             <a
               href="https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices"
               target="_blank"
               rel="noreferrer"
             >
               Microsoft Azure Retail Prices API
-            </a>
-            . USD figures are Microsoft retail list prices; other currencies are reference estimates.
-            Actual bills may differ with enterprise agreements, credits, and negotiated rates. Monthly
-            figures assume {HOURS_PER_MONTH} hours unless you change them.
+            </a>{' '}
+            (USD retail list). Matches Pricing Calculator building blocks for US VMs: Linux/Windows
+            compute, Windows & SQL license meters, Azure Hybrid Benefit, savings plans, reserved
+            instances, and managed OS disks. Enterprise Agreement / CSP discounts are not applied.
+            Default month = {HOURS_PER_MONTH} hours.
           </p>
         </div>
 
-        <EstimatePanel
+        <QuoteCart
           lines={lines}
-          currency={currency}
           bump={bump}
-          onUpdate={updateLine}
-          onRemove={removeLine}
-          onClear={clear}
-          onExportJson={exportJson}
+          onRemove={(id) => setLines((prev) => prev.filter((l) => l.id !== id))}
+          onClear={() => setLines([])}
           onExportCsv={exportCsv}
+          onExportJson={exportJson}
         />
       </div>
     </div>
