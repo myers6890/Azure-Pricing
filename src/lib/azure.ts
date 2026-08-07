@@ -70,7 +70,7 @@ export function getAuthStatus(): AuthStatus {
     authenticated: true,
     message: hasServicePrincipal
       ? "Using service principal credentials from environment variables."
-      : "Using DefaultAzureCredential (Azure CLI, managed identity, or environment).",
+      : "Using DefaultAzureCredential (Windows: Azure CLI `az login`, Visual Studio, or environment).",
     tenantHint: process.env.AZURE_TENANT_ID,
   };
 }

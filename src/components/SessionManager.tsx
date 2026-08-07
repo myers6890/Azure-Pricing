@@ -103,44 +103,28 @@ export default function SessionManager() {
     void bootstrap();
   }, []);
 
-  useEffect(() => {
-    if (!subscriptionId) return;
+  async function refreshSessions(options?: {
+    subscriptionId?: string;
+    hostPoolName?: string;
+    sessionState?: string;
+    userQuery?: string;
+  }) {
+    const subId = options?.subscriptionId ?? subscriptionId;
+    if (!subId) return;
 
-    async function loadPools() {
-      setLoadingPools(true);
-      setError(null);
-      setHostPoolName("");
-      try {
-        const res = await fetch(
-          `/api/hostpools?subscriptionId=${encodeURIComponent(subscriptionId)}`,
-        );
-        const json = await res.json();
-        if (!res.ok) {
-          throw new Error(json.details || json.error || "Failed to load host pools");
-        }
-        setHostPools(json.hostPools as HostPoolSummary[]);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        setHostPools([]);
-      } finally {
-        setLoadingPools(false);
-      }
-    }
+    const pool = options?.hostPoolName ?? hostPoolName;
+    const state = options?.sessionState ?? sessionState;
+    const user = options?.userQuery ?? userQuery;
 
-    void loadPools();
-  }, [subscriptionId]);
-
-  async function refreshSessions() {
-    if (!subscriptionId) return;
     setLoadingSessions(true);
     setError(null);
     setNotice(null);
     setActionResults(null);
 
-    const params = new URLSearchParams({ subscriptionId });
-    if (hostPoolName) params.set("hostPoolName", hostPoolName);
-    if (sessionState) params.set("sessionState", sessionState);
-    if (userQuery.trim()) params.set("userPrincipalName", userQuery.trim());
+    const params = new URLSearchParams({ subscriptionId: subId });
+    if (pool) params.set("hostPoolName", pool);
+    if (state) params.set("sessionState", state);
+    if (user.trim()) params.set("userPrincipalName", user.trim());
 
     try {
       const res = await fetch(`/api/sessions?${params.toString()}`);
@@ -161,10 +145,44 @@ export default function SessionManager() {
   }
 
   useEffect(() => {
-    if (!subscriptionId || loadingPools) return;
-    void refreshSessions();
+    if (!subscriptionId) return;
+
+    let cancelled = false;
+
+    async function loadPoolsAndSessions() {
+      setLoadingPools(true);
+      setError(null);
+      setHostPoolName("");
+      try {
+        const res = await fetch(
+          `/api/hostpools?subscriptionId=${encodeURIComponent(subscriptionId)}`,
+        );
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.details || json.error || "Failed to load host pools");
+        }
+        if (cancelled) return;
+        setHostPools(json.hostPools as HostPoolSummary[]);
+        await refreshSessions({
+          subscriptionId,
+          hostPoolName: "",
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setHostPools([]);
+        setSessions([]);
+      } finally {
+        if (!cancelled) setLoadingPools(false);
+      }
+    }
+
+    void loadPoolsAndSessions();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscriptionId, hostPoolName, loadingPools]);
+  }, [subscriptionId]);
 
   function toggleAll(checked: boolean) {
     if (!checked) {
@@ -238,7 +256,7 @@ export default function SessionManager() {
             AVD session control
           </h1>
           <p className="mt-3 max-w-xl text-base leading-relaxed text-[var(--muted)]">
-            Query Azure Virtual Desktop user sessions and log users off without opening the Azure portal.
+            Windows-friendly AVD control: query user sessions and log users off without opening the Azure portal.
           </p>
         </div>
 
@@ -250,6 +268,11 @@ export default function SessionManager() {
           <p className="mt-1 max-w-xs text-sm text-[var(--muted)]">
             {status?.message ?? (loadingSubs ? "Checking authentication…" : "—")}
           </p>
+          {status?.mode === "azure" && (
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              On Windows: run <code className="text-[var(--teal)]">.\scripts\Connect-AzureForSignOff.ps1</code> then restart the app.
+            </p>
+          )}
         </div>
       </header>
 
@@ -279,7 +302,11 @@ export default function SessionManager() {
           </span>
           <select
             value={hostPoolName}
-            onChange={(e) => setHostPoolName(e.target.value)}
+            onChange={(e) => {
+              const nextPool = e.target.value;
+              setHostPoolName(nextPool);
+              void refreshSessions({ hostPoolName: nextPool });
+            }}
             disabled={loadingPools || !subscriptionId}
             className="rounded-xl border border-[var(--line)] bg-[var(--ink-soft)] px-3 py-2.5 text-[var(--text)] outline-none focus:border-[var(--teal)]"
           >
@@ -510,7 +537,8 @@ export default function SessionManager() {
       </section>
 
       <footer className="rise-in rise-in-delay-3 mt-auto border-t border-[var(--line)] pt-5 text-sm text-[var(--muted)]">
-        Uses Azure Desktop Virtualization APIs via DefaultAzureCredential. No portal connection required.
+        Runs locally on Windows via Node.js / PowerShell. Uses Azure Desktop Virtualization APIs through
+        DefaultAzureCredential (<code className="text-[var(--teal)]">az login</code> or a service principal). No portal required.
       </footer>
 
       {confirmAction && (

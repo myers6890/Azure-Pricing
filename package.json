@@ -2,11 +2,20 @@
   "name": "avd-session-manager",
   "version": "0.1.0",
   "private": true,
+  "description": "Windows-friendly Azure Virtual Desktop session manager — query and log off AVD sessions without the Azure portal.",
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src --max-warnings=0",
     "test": "npx --yes tsx src/lib/arm.test.ts"
   },
   "dependencies": {
