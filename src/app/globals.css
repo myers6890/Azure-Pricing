@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #0c1216;
+  --ink-soft: #152028;
+  --panel: rgba(18, 30, 38, 0.82);
+  --line: rgba(148, 178, 188, 0.18);
+  --text: #e8f0f2;
+  --muted: #8aa0ab;
+  --teal: #2ec4b6;
+  --teal-deep: #149e91;
+  --amber: #f0a202;
+  --danger: #ef5d60;
+  --ok: #6fbf73;
+  --glow: rgba(46, 196, 182, 0.18);
+  --background: var(--ink);
+  --foreground: var(--text);
+  --font-display: var(--font-space-grotesk);
+  --font-body: var(--font-ibm-plex);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-body), "Segoe UI", sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(46, 196, 182, 0.16), transparent 55%),
+    radial-gradient(900px 500px at 95% 0%, rgba(240, 162, 2, 0.12), transparent 50%),
+    linear-gradient(180deg, #0c1216 0%, #101820 45%, #0b1014 100%);
+  background-attachment: fixed;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(148, 178, 188, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 178, 188, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(circle at 50% 20%, black 20%, transparent 75%);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(46, 196, 182, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(46, 196, 182, 0);
+  }
+}
+
+.rise-in {
+  animation: rise-in 0.55s ease-out both;
+}
+
+.rise-in-delay-1 {
+  animation-delay: 0.08s;
+}
+
+.rise-in-delay-2 {
+  animation-delay: 0.16s;
+}
+
+.rise-in-delay-3 {
+  animation-delay: 0.24s;
+}
+
+.brand-mark {
+  animation: pulse-soft 2.8s ease-in-out infinite;
+}
+
+.session-row {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.session-row:hover {
+  transform: translateX(2px);
+}
+
+.session-row[data-selected="true"] {
+  background: rgba(46, 196, 182, 0.1);
+  border-color: rgba(46, 196, 182, 0.45);
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
