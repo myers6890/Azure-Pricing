@@ -4,6 +4,16 @@ Query **Azure Virtual Desktop (AVD)** user sessions on a **Windows** workstation
 
 Built for Windows admins using PowerShell, Node.js, and Azure CLI / service principal auth.
 
+## App preview
+
+### Session dashboard
+
+![SignOff AVD session dashboard showing session filters, user states, host pools, and session hosts](docs/images/avd-session-dashboard.png)
+
+### Logoff confirmation
+
+![SignOff confirmation dialog for logging off two selected AVD sessions](docs/images/avd-session-logoff-confirmation.png)
+
 ## What it does
 
 - Lists Azure subscriptions available to your Windows credentials
